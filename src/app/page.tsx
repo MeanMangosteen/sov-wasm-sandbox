@@ -2,9 +2,12 @@ import { createStandardRollup } from "@sovereign-sdk/web3";
 import styles from "./page.module.css";
 // import { Asset } from "@bulletxyz/bullet-sdk";
 
+// Dynamically rendered route: 
+// https://nextjs.org/docs/app/building-your-application/rendering/server-components#dynamic-rendering
 export const dynamic = "force-dynamic";
 
 export default function Home() {
+  /** This call crashes  */
   createStandardRollup({
     url: "https://rollup-testnet.zeta.markets",
     context: {
@@ -17,6 +20,7 @@ export default function Home() {
     },
   });
 
+  /** So does this */
   // console.log(Asset);
 
   return (
