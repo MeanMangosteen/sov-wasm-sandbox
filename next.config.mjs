@@ -1,67 +1,102 @@
 /** @type {import('next').NextConfig} */
-import { access, symlink } from "fs/promises";
+import { copyFile, mkdir } from "fs/promises";
 import { join } from "path";
+import * as fs from "node:fs";
 
-const nextConfig = () => {
-  const config = {
-    webpack(config, { isServer }) {
-      // Enable WebAssembly
-      config.experiments = {
-        ...config.experiments,
-        asyncWebAssembly: true,
-      };
+const nextConfig = {
+  webpack(config, { isServer }) {
+    config.experiments = {
+      ...config.experiments,
+      asyncWebAssembly: true,
+      layers: true,
+    };
 
-      // Add WebAssembly MIME type to asset loader
-      config.module.rules.push({
-        test: /\.wasm$/,
-        type: "webassembly/async",
-      });
+    config.module.rules.push({
+      test: /\.wasm$/,
+      type: "webassembly/async",
+    });
 
-      config.plugins.push(
-        new (class {
-          apply(compiler) {
-            compiler.hooks.afterEmit.tapPromise(
-              "SymlinkWebpackPlugin",
-              async (compiler) => {
-                if (isServer) {
-                  const from = join(compiler.options.output.path, "../static");
-                  const to = join(compiler.options.output.path, "static");
+    config.plugins.push(
+      new (class {
+        apply(compiler) {
+          compiler.hooks.afterEmit.tapPromise(
+            "CopyWasmPlugin",
+            async (compilation) => {
+              if (isServer) {
+                const outputPath = compilation.outputOptions.path;
 
-                  try {
-                    await access(from);
-                    return;
-                  } catch (error) {
-                    if (error.code === "ENOENT") {
-                    } else {
-                      throw error;
+                const staticWasmDir = join(outputPath, "static", "wasm");
+                await mkdir(staticWasmDir, { recursive: true }).catch(() => {});
+
+                console.log("Output path:", outputPath);
+                console.log("Static WASM dir:", staticWasmDir);
+
+                const searchDirs = [
+                  join(outputPath, "chunks"),
+                  outputPath,
+                  join(outputPath, "app"),
+                  join(outputPath, "pages"),
+                  join(outputPath, "..", "static"),
+                ];
+
+                for (const dir of searchDirs) {
+                  if (fs.existsSync(dir)) {
+                    console.log(`Searching for WASM files in: ${dir}`);
+                    const wasmFiles = findWasmFiles(dir);
+                    console.log(
+                      `Found ${wasmFiles.length} WASM files in ${dir}`
+                    );
+
+                    for (const wasmFile of wasmFiles) {
+                      const fileName = wasmFile.split("/").pop();
+                      const destPath = join(staticWasmDir, fileName);
+
+                      try {
+                        await copyFile(wasmFile, destPath);
+                        console.log(
+                          `Successfully copied ${fileName} to ${destPath}`
+                        );
+                      } catch (error) {
+                        console.warn(
+                          `Warning copying WASM file ${fileName}:`,
+                          error
+                        );
+                      }
                     }
+                  } else {
+                    console.log(`Directory doesn't exist: ${dir}`);
                   }
-                  await symlink(to, from, "junction");
                 }
               }
-            );
-          }
-        })()
-      );
+            }
+          );
+        }
+      })()
+    );
 
-      // if (isServer) {
-      //   config.output.webassemblyModuleFilename =
-      //     "./../static/wasm/[modulehash].wasm";
-      // } else {
-      //   config.output.webassemblyModuleFilename =
-      //     "static/wasm/[modulehash].wasm";
-      // }
-
-      return config;
-    },
-    eslint: {
-      // I don't want to do this, but lint error in auto-gen src/API.ts
-      // TODO: find a way to enable this.
-      ignoreDuringBuilds: true,
-    },
-  };
-
-  return config;
+    return config;
+  },
+  eslint: {
+    ignoreDuringBuilds: true,
+  },
 };
+
+function findWasmFiles(dir) {
+  const results = [];
+  const files = fs.readdirSync(dir);
+
+  for (const file of files) {
+    const filePath = join(dir, file);
+    const stat = fs.statSync(filePath);
+
+    if (stat.isDirectory()) {
+      results.push(...findWasmFiles(filePath));
+    } else if (file.endsWith(".wasm")) {
+      results.push(filePath);
+    }
+  }
+
+  return results;
+}
 
 export default nextConfig;
